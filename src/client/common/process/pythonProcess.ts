@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 import { injectable } from 'inversify';
 import * as path from 'path';
+import { window, commands } from 'vscode';
 
 import { IConfigurationService } from '../../common/types';
 import { IServiceContainer } from '../../ioc/types';
@@ -53,24 +54,38 @@ export class PythonExecutionService implements IPythonExecutionService {
 
             const { command, args } = this.getExecutionInfo([file]);
             const jsonValue = await waitForPromise(this.procService.exec(command, args, { mergeStdOutErr: true }), interpreterInfoTimeout * 1000)
-
-                .then(output => output ? output.stdout.trim() : '--timed out--'); // --timed out-- should cause an exception
+                .then(output => {
+                    if (output) {
+                        return output.stdout.trim();
+                    }
+                    const changeTimeoutSetting = 'Change timeout setting';
+                    window.showErrorMessage(
+                        'Parsing interpreter information timed out.',
+                        changeTimeoutSetting
+                    ).then(value => {
+                        // User clicked on the link, open it.
+                        if (value === changeTimeoutSetting) {
+                            commands.executeCommand('workbench.action.openSettings', 'python.retrieveInterpreterInfoTimeout');
+                        }
+                    });
+                    return '--timed out';
+                });
 
             let json: { versionInfo: PythonVersionInfo; sysPrefix: string; sysVersion: string; is64Bit: boolean };
             try {
                 json = JSON.parse(jsonValue);
             } catch (ex) {
-                traceError(`Failed to parse interpreter information for '${this.pythonPath}' with JSON ${jsonValue}`, ex);
+                traceError(`Failed to parse interpreter information for '${this.pythonPath}' with JSON ${jsonValue}.`, ex);
                 return;
             }
-                const versionValue = json.versionInfo.length === 4 ? `${json.versionInfo.slice(0, 3).join('.')}-${json.versionInfo[3]}` : json.versionInfo.join('.');
-                return {
-                    architecture: json.is64Bit ? Architecture.x64 : Architecture.x86,
-                    path: this.pythonPath,
-                    version: parsePythonVersion(versionValue),
-                    sysVersion: json.sysVersion,
-                    sysPrefix: json.sysPrefix
-                };
+            const versionValue = json.versionInfo.length === 4 ? `${json.versionInfo.slice(0, 3).join('.')}-${json.versionInfo[3]}` : json.versionInfo.join('.');
+            return {
+                architecture: json.is64Bit ? Architecture.x64 : Architecture.x86,
+                path: this.pythonPath,
+                version: parsePythonVersion(versionValue),
+                sysVersion: json.sysVersion,
+                sysPrefix: json.sysPrefix
+            };
         } catch (ex) {
             traceError(`Failed to get interpreter information for '${this.pythonPath}'`, ex);
         }
